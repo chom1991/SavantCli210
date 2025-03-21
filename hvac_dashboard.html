@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Thermostat Dashboard</title>
+  <style>
+    /* Global Styles */
+    body {
+      background-color: #252527;
+      color: #D1D5DB;
+      font-family: "Inter", sans-serif;
+      margin: 0;
+      padding: 20px;
+    }
+    h1, h2 {
+      text-align: center;
+      color: #FFFFFF;
+      margin-bottom: 20px;
+      font-weight: 600;
+    }
+    /* Latest Status Section */
+    #latestStatus {
+      background-color: #40414F;
+      padding: 20px;
+      border: 1px solid #4E505F;
+      border-radius: 8px;
+      max-width: 700px;
+      margin: 0 auto 30px auto;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+    }
+    #latestStatus p {
+      font-size: 1.1em;
+      margin: 10px 0;
+    }
+    /* Chart Sections */
+    .chart-section {
+      margin-bottom: 40px;
+    }
+    .chart-container {
+      background-color: #40414F;
+      border: 1px solid #4E505F;
+      border-radius: 8px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+      max-width: 900px;
+      margin: 20px auto;
+      position: relative;
+      height: 300px;
+      padding: 10px;
+    }
+    /* Duty Cycle Section */
+    .duty-cycle {
+      background-color: #40414F;
+      border: 1px solid #4E505F;
+      border-radius: 8px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+      max-width: 700px;
+      margin: 20px auto;
+      padding: 15px;
+      text-align: center;
+    }
+  </style>
+  <!-- Load Chart.js Library (for temperature charts) -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script>
+    /**
+     * createLineChart:
+     * Creates a styled line chart using Chart.js with a dark theme.
+     */
+    function createLineChart(canvasId, labels, datasets, customOptions = {}) {
+      const ctx = document.getElementById(canvasId).getContext('2d');
+      const defaultOptions = {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: {
+          duration: 1500,
+          easing: 'easeOutBounce'
+        },
+        scales: {
+          x: {
+            grid: { color: 'rgba(209,213,219,0.2)' },
+            ticks: { font: { size: 12 }, color: '#D1D5DB' }
+          },
+          y: {
+            beginAtZero: false,
+            ticks: { stepSize: 1, color: '#D1D5DB' }
+          }
+        },
+        plugins: {
+          legend: {
+            display: true,
+            position: 'top',
+            labels: { font: { size: 14 }, color: '#FFFFFF' }
+          },
+          tooltip: {
+            backgroundColor: 'rgba(0,0,0,0.7)',
+            titleFont: { size: 16 },
+            bodyFont: { size: 14 },
+            padding: 10
+          },
+          title: {
+            display: true,
+            text: customOptions.titleText || '',
+            font: { size: 18 },
+            color: '#FFFFFF'
+          }
+        },
+        elements: {
+          line: { tension: 0.3, borderWidth: 3 },
+          point: { radius: 4, hoverRadius: 6 }
+        }
+      };
+      const options = Object.assign({}, defaultOptions, customOptions);
+      new Chart(ctx, {
+        type: 'line',
+        data: { labels, datasets },
+        options: options
+      });
+    }
+
+    /**
+     * fetchLatestStatus:
+     * Fetches the latest status from the API endpoint and updates the DOM.
+     */
+    async function fetchLatestStatus() {
+      try {
+        const response = await fetch('/current_status');
+        const data = await response.json();
+        const statusDiv = document.getElementById('statusContent');
+        if (data.length === 0) {
+          statusDiv.innerText = 'No data available.';
+        } else {
+          let html = '';
+          data.forEach(zoneStatus => {
+            html += `<p><strong>${zoneStatus.zone.toUpperCase()}</strong>: Temperature: ${zoneStatus.temperature ? zoneStatus.temperature.toFixed(1) : 'N/A'} °F, HVAC: ${zoneStatus.hvac}, (Last updated: ${zoneStatus.timestamp})</p>`;
+          });
+          statusDiv.innerHTML = html;
+        }
+      } catch (error) {
+        console.error('Error fetching latest status:', error);
+        document.getElementById('statusContent').innerText = 'Error fetching data.';
+      }
+    }
+
+    /**
+     * plotChart:
+     * Generic function to fetch and plot a temperature chart.
+     * The y-axis is forced between 60 and 85.
+     */
+    async function plotChart(apiEndpoint, canvasId, valueKey, labelMap, chartLabel, chartOptions = {}) {
+      try {
+        const response = await fetch(apiEndpoint);
+        const data = await response.json();
+        const allTimestamps = data.map(d => d.timestamp);
+        const labels = Array.from(new Set(allTimestamps)).sort();
+        
+        // Build a data map for each zone.
+        const zones = {};
+        data.forEach(d => {
+          if (!zones[d.zone]) zones[d.zone] = {};
+          zones[d.zone][d.timestamp] = d[valueKey];
+        });
+        
+        // Fill missing values with the last known value.
+        const datasets = Object.keys(zones).map(zone => {
+          const color = zone === 'upstairs' ? '#80cbc4' : '#ffab91';
+          const dataPoints = [];
+          let lastValue = null;
+          labels.forEach(label => {
+            if (zones[zone][label] !== undefined) {
+              lastValue = zones[zone][label];
+              dataPoints.push(lastValue);
+            } else {
+              dataPoints.push(lastValue);
+            }
+          });
+          return {
+            label: labelMap[zone] || zone,
+            data: dataPoints,
+            fill: false,
+            borderColor: color
+          };
+        });
+        
+        const defaultTempOptions = {
+          scales: { 
+            y: {
+              beginAtZero: false,
+              min: 60,
+              max: 85,
+              ticks: { stepSize: 1, color: '#D1D5DB' }
+            }
+          },
+          plugins: { title: { display: true, text: chartLabel } }
+        };
+        const options = Object.assign({}, defaultTempOptions, chartOptions);
+        createLineChart(canvasId, labels, datasets, options);
+      } catch (error) {
+        console.error(`Error plotting chart from ${apiEndpoint}:`, error);
+      }
+    }
+
+    /**
+     * fetchDutyCycle:
+     * Fetches the HVAC duty cycle percentages from the API endpoint and displays them as plain text.
+     * Expected API response: an object with keys: off, fan, cool, heat.
+     */
+    async function fetchDutyCycle(apiEndpoint, elementId) {
+      try {
+        const response = await fetch(apiEndpoint);
+        if (!response.ok) {
+          throw new Error("HTTP error! status: " + response.status);
+        }
+        const data = await response.json();
+        // Check if data is an object with the expected keys.
+        if (data && typeof data === 'object' && data.hasOwnProperty('off')) {
+          document.getElementById(elementId).innerHTML = `
+            <p>Off: ${data.off}%</p>
+            <p>Fan Only: ${data.fan}%</p>
+            <p>Cooling: ${data.cool}%</p>
+            <p>Heating: ${data.heat}%</p>
+          `;
+        } else {
+          document.getElementById(elementId).innerText = "No data available.";
+        }
+      } catch (error) {
+        console.error(`Error fetching duty cycle from ${apiEndpoint}:`, error);
+        document.getElementById(elementId).innerText = "Error fetching data.";
+      }
+    }
+
+    // Plot charts for temperature usage.
+    async function plotTemperatureCharts() {
+      await plotChart('/api/hourly_usage', 'hourlyTempChart', 'avg_temp',
+        { upstairs: 'Upstairs', downstairs: 'Downstairs' },
+        'Hourly Temperature (°F)', { scales: { y: { min: 60, max: 85 } } });
+      await plotChart('/api/daily_usage', 'dailyTempChart', 'avg_temp',
+        { upstairs: 'Upstairs', downstairs: 'Downstairs' },
+        'Daily Temperature (°F) - Last 24 Hours', { scales: { y: { min: 60, max: 85 } } });
+      await plotChart('/api/weekly_usage', 'weeklyTempChart', 'avg_temp',
+        { upstairs: 'Upstairs', downstairs: 'Downstairs' },
+        'Weekly Temperature (°F) - Last 7 Days', { scales: { y: { min: 60, max: 85 } } });
+      await plotChart('/api/monthly_usage', 'monthlyTempChart', 'avg_temp',
+        { upstairs: 'Upstairs', downstairs: 'Downstairs' },
+        'Monthly Temperature (°F) - Last 30 Days', { scales: { y: { min: 60, max: 85 } } });
+    }
+
+    // Fetch and display duty cycle percentages (as plain text).
+    async function updateDutyCycles() {
+      await fetchDutyCycle('/api/hourly_hvac_duty', 'hourlyDuty');
+      await fetchDutyCycle('/api/daily_hvac_duty', 'dailyDuty');
+      await fetchDutyCycle('/api/weekly_hvac_duty', 'weeklyDuty');
+      await fetchDutyCycle('/api/monthly_hvac_duty', 'monthlyDuty');
+    }
+
+    // Initialize charts and fetch status once DOM is loaded.
+    document.addEventListener('DOMContentLoaded', () => {
+      fetchLatestStatus();
+      plotTemperatureCharts();
+      updateDutyCycles();
+      setInterval(fetchLatestStatus, 30000);
+      // Optionally, set an interval for duty cycle updates.
+    });
+  </script>
+</head>
+<body>
+  <h1>Thermostat Dashboard</h1>
+  
+  <!-- Latest Status Section -->
+  <div id="latestStatus">
+    <h2>Latest Status</h2>
+    <div id="statusContent">Loading latest status...</div>
+  </div>
+  
+  <!-- Temperature Charts -->
+  <div class="chart-section">
+    <h2>Hourly Temperature (°F)</h2>
+    <div class="chart-container">
+      <canvas id="hourlyTempChart"></canvas>
+    </div>
+  </div>
+  <div class="chart-section">
+    <h2>Daily Temperature (°F) - Last 24 Hours</h2>
+    <div class="chart-container">
+      <canvas id="dailyTempChart"></canvas>
+    </div>
+  </div>
+  <div class="chart-section">
+    <h2>Weekly Temperature (°F) - Last 7 Days</h2>
+    <div class="chart-container">
+      <canvas id="weeklyTempChart"></canvas>
+    </div>
+  </div>
+  <div class="chart-section">
+    <h2>Monthly Temperature (°F) - Last 30 Days</h2>
+    <div class="chart-container">
+      <canvas id="monthlyTempChart"></canvas>
+    </div>
+  </div>
+  
+  <!-- Duty Cycle Percentage Display (No Graphs) -->
+  <div class="duty-cycle">
+    <h2>Hourly HVAC Duty Cycle (%)</h2>
+    <div id="hourlyDuty">Loading...</div>
+  </div>
+  <div class="duty-cycle">
+    <h2>Daily HVAC Duty Cycle (%)</h2>
+    <div id="dailyDuty">Loading...</div>
+  </div>
+  <div class="duty-cycle">
+    <h2>Weekly HVAC Duty Cycle (%)</h2>
+    <div id="weeklyDuty">Loading...</div>
+  </div>
+  <div class="duty-cycle">
+    <h2>Monthly HVAC Duty Cycle (%)</h2>
+    <div id="monthlyDuty">Loading...</div>
+  </div>
+</body>
+</html>
